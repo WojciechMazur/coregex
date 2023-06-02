@@ -67,6 +67,14 @@ class CoregexArbitraryTest {
   }
 
   @Test
+  void shouldGenerateShortString() {
+    Property.def("should generate short string")
+        .forAll(CoregexArbitrary.of("(?!.{32,})[a-zA-Z0-9]+"))
+        .suchThat(str -> str.length() < 32 && str.chars().allMatch(Character::isLetterOrDigit))
+        .check();
+  }
+
+  @Test
   void shouldGenerateUniqueStrings() {
     Property.def("should generate unique strings")
         .forAll(Arbitrary.list(CoregexArbitrary.of("[a-zA-Z0-9]{32,}")))

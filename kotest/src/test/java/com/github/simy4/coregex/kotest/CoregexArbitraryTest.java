@@ -90,6 +90,21 @@ class CoregexArbitraryTest {
   }
 
   @Test
+  void shouldGenerateShortString() {
+    RandomSource randomSource =
+        RandomSource.Companion.seeded(ThreadLocalRandom.current().nextLong());
+    assertTrue(
+        SequencesKt.all(
+            SequencesKt.take(
+                CoregexArbitrary.of("(?!.{32,})[a-zA-Z0-9]+")
+                    .generate(randomSource, new EdgeConfig()),
+                100),
+            str ->
+                str.getValue().length() < 32
+                    && str.getValue().chars().allMatch(Character::isLetterOrDigit)));
+  }
+
+  @Test
   void shouldGenerateUniqueStrings() {
     RandomSource randomSource =
         RandomSource.Companion.seeded(ThreadLocalRandom.current().nextLong());

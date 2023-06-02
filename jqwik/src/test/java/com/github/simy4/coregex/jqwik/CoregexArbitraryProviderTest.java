@@ -60,6 +60,11 @@ class CoregexArbitraryProviderTest {
   }
 
   @Property
+  boolean shouldGenerateShortString(@ForAll @Regex("(?!.{32,})[a-zA-Z0-9]+") String str) {
+    return str.length() < 32 && str.chars().allMatch(Character::isLetterOrDigit);
+  }
+
+  @Property
   void shouldGenerateUniqueStrings(@ForAll List<@Regex("[a-zA-Z0-9]{32,}") String> strings) {
     assertTrue(
         strings.stream()

@@ -47,6 +47,10 @@ object CoregexSpecification extends Properties("Coregex") with CoregexInstances 
       iso8601Date.toString =? formatter.format(formatter.parse(iso8601Date))
   }
 
+  property("should generated short string") = forAll { (str: String Matching "(?!.{32,})[a-zA-Z0-9]+") =>
+    str.length() < 32 && str.forall(_.isLetterOrDigit)
+  }
+
   property("should generate unique strings") = forAll { (strings: List[String Matching "[a-zA-Z0-9]{32,}"]) =>
     strings.forall { s =>
       s.length >= 32 && s.forall(_.isLetterOrDigit)

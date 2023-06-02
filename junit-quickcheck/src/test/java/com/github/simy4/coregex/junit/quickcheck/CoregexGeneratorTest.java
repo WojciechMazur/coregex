@@ -61,6 +61,11 @@ public class CoregexGeneratorTest {
   }
 
   @Property
+  public void shouldGenerateShortString(@Regex("(?!.{32,})[a-zA-Z0-9]+") String str) {
+    assertTrue(str.length() < 32 && str.chars().allMatch(Character::isLetterOrDigit));
+  }
+
+  @Property
   public void shouldGenerateUniqueStrings(List<@Regex("[a-zA-Z0-9]{32,}") String> strings) {
     assertTrue(
         strings.stream()

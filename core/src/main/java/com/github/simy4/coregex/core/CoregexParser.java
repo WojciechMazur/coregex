@@ -61,20 +61,47 @@ public final class CoregexParser {
 
   /*
    * <pre>{@code
-   * re ::= simpleRE, {'|', simpleRE}
+   * re ::= look-ahead, {'|', look-ahead}
    * }</pre>
    */
   private Coregex RE(Context ctx) {
-    Coregex re = simpleRE(ctx);
+    Coregex re = lookAhead(ctx);
     if ('|' == ctx.peek()) {
       List<Coregex> union = new ArrayList<>();
       while ('|' == ctx.peek()) {
         ctx.match('|');
-        union.add(simpleRE(ctx));
+        union.add(lookAhead(ctx));
       }
       re = new Coregex.Union(re, union.toArray(new Coregex[0]));
     }
     return re;
+  }
+
+  /*
+   * <pre>{@code
+   * look-ahead ::= ('(', '?', '=' | '!', re, ')', re) | simpleRE
+   * }</pre>
+   */
+  private Coregex lookAhead(Context ctx) {
+    if ('(' == ctx.peek() && '?' == ctx.peek(1) && '=' == ctx.peek(2)) {
+      ctx.match('(');
+      ctx.match('?');
+      ctx.match('=');
+      Coregex lookAhead = RE(ctx);
+      ctx.match(')');
+      Coregex re = RE(ctx);
+      return new Coregex.Intersection(re, lookAhead);
+    } else if ('(' == ctx.peek() && '?' == ctx.peek(1) && '!' == ctx.peek(2)) {
+      ctx.match('(');
+      ctx.match('?');
+      ctx.match('!');
+      Coregex lookAhead = RE(ctx);
+      ctx.match(')');
+      Coregex re = RE(ctx);
+      return new Coregex.Intersection(re, lookAhead.negate());
+    } else {
+      return simpleRE(ctx);
+    }
   }
 
   /*
@@ -322,7 +349,7 @@ public final class CoregexParser {
 
   /*
    * <pre>{@code
-   * group ::= '(', [ '?', ( ':' | '>' | '=' | '!' | '<', [ '=' | '!' | literal, '>' ] | flags ) ], re, ')'
+   * group ::= '(', [ '?', ( ':' | '>' | '<',  literal, '>' | flags | '-', flags ) ], re, ')'
    * }</pre>
    */
   private Coregex group(Context ctx) {
@@ -339,23 +366,11 @@ public final class CoregexParser {
           ctx.match('>');
           group = RE(ctx);
           break;
-        case '=':
-        case '!':
-          group = ctx.unsupported("look-aheads are not supported");
-          break;
         case '<':
           ctx.match('<');
-          switch (ctx.peek()) {
-            case '=':
-            case '!':
-              group = ctx.unsupported("look-behinds are not supported");
-              break;
-            default:
-              ctx.takeWhile(ch -> '>' != ch);
-              ctx.match('>');
-              group = RE(ctx);
-              break;
-          }
+          ctx.takeWhile(ch -> '>' != ch);
+          ctx.match('>');
+          group = RE(ctx);
           break;
         case '-':
           ctx.match('-');
