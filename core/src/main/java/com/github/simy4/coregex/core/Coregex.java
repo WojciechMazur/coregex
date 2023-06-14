@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -87,16 +88,6 @@ public abstract class Coregex implements Serializable {
   private Coregex() {}
 
   /**
-   * Internal sampler of random strings.
-   *
-   * @param rng random number generator to use
-   * @param remainder remaining permitted length of the string to be generated
-   * @return next random number generator state with sampled string
-   * @throws IllegalArgumentException if remainder is lesser than {@link #minLength()}
-   */
-  protected abstract Pair<RNG, String> apply(RNG rng, int remainder);
-
-  /**
    * Samples one random string that matches this regex.
    *
    * @param rng random number generator to use
@@ -105,7 +96,15 @@ public abstract class Coregex implements Serializable {
   public final String generate(RNG rng) {
     int remainder = maxLength();
     remainder = -1 == remainder ? Integer.MAX_VALUE - 2 : remainder;
-    return apply(requireNonNull(rng, "rng"), remainder).getSecond();
+    int attempts = 0;
+    Optional<String> result;
+    Generator generator = new Generator(rng, remainder);
+    do {
+      result = visit(generator);
+    } while (!result.isPresent() && ++attempts < 100);
+    return result.orElseThrow(
+        () ->
+            new IllegalStateException("Failed to generate a string with: " + this + " and " + rng));
   }
 
   /**
@@ -149,6 +148,15 @@ public abstract class Coregex implements Serializable {
   /** @return simplified and more memory efficient version of this regex. */
   public abstract Coregex simplify();
 
+  /**
+   * Traverses the coregex syntax tree.
+   *
+   * @param visitor nodes visitor
+   * @param <T> visitor result type
+   * @return visitor result
+   */
+  protected abstract <T> T visit(Visitor<T> visitor);
+
   /** Sequential concatenation of regexes. */
   public static final class Concat extends Coregex {
     private static final long serialVersionUID = 1L;
@@ -163,29 +171,6 @@ public abstract class Coregex implements Serializable {
     public Concat(Coregex first, Coregex... rest) {
       this.first = requireNonNull(first, "first");
       this.rest = Arrays.copyOf(rest, rest.length);
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    protected Pair<RNG, String> apply(RNG rng, int remainder) {
-      int minLength = minLength();
-      if (remainder < minLength) {
-        throw new IllegalStateException(
-            "remainder: " + remainder + " has to be greater than " + minLength);
-      }
-      StringBuilder sb = new StringBuilder(minLength + 16);
-      remainder -= minLength;
-      Coregex chunk = first;
-      int i = 0;
-      do {
-        int chunkMinLength = chunk.minLength();
-        Pair<RNG, String> rngAndCoregex = chunk.apply(rng, remainder + chunkMinLength);
-        rng = rngAndCoregex.getFirst();
-        String value = rngAndCoregex.getSecond();
-        sb.append(value);
-        remainder -= value.length() - chunkMinLength;
-      } while (i < rest.length && (chunk = rest[i++]) != null);
-      return new Pair<>(rng, sb.toString());
     }
 
     /** {@inheritDoc} */
@@ -241,6 +226,12 @@ public abstract class Coregex implements Serializable {
       }
     }
 
+    /** {@inheritDoc} */
+    @Override
+    protected <T> T visit(Visitor<T> visitor) {
+      return visitor.visit(this);
+    }
+
     /** @return underlying regexes in order of concatenation. */
     public List<Coregex> concat() {
       List<Coregex> concat = new ArrayList<>(rest.length + 1);
@@ -281,7 +272,7 @@ public abstract class Coregex implements Serializable {
 
   /** Literal string regex. */
   public static final class Literal extends Coregex {
-    private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 2L;
 
     private final String literal;
     private final int flags;
@@ -306,41 +297,6 @@ public abstract class Coregex implements Serializable {
 
     /** {@inheritDoc} */
     @Override
-    protected Pair<RNG, String> apply(RNG rng, int remainder) {
-      if (remainder < minLength()) {
-        throw new IllegalStateException(
-            "remainder: " + remainder + " has to be greater than " + minLength());
-      }
-      Pair<RNG, Boolean> rngAndBoolean;
-      if (0 != (flags & Pattern.CASE_INSENSITIVE)) {
-        StringBuilder literal = new StringBuilder(this.literal);
-        for (int i = 0; i < literal.length(); i++) {
-          char ch = literal.charAt(i);
-          if (Character.isLowerCase(ch)) {
-            rngAndBoolean = rng.genBoolean();
-            rng = rngAndBoolean.getFirst();
-            if (rngAndBoolean.getSecond()) {
-              literal.setCharAt(i, Character.toUpperCase(ch));
-            }
-          }
-          if (Character.isUpperCase(ch)) {
-            rngAndBoolean = rng.genBoolean();
-            rng = rngAndBoolean.getFirst();
-            if (rngAndBoolean.getSecond()) {
-              literal.setCharAt(i, Character.toLowerCase(ch));
-            }
-          }
-        }
-        return new Pair<>(rng, literal.toString());
-      } else {
-        rngAndBoolean =
-            rng.genBoolean(); // need to burn one random number to make result deterministic
-        return new Pair<>(rngAndBoolean.getFirst(), literal);
-      }
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public int minLength() {
       return literal.length();
     }
@@ -357,9 +313,20 @@ public abstract class Coregex implements Serializable {
       return this;
     }
 
+    /** {@inheritDoc} */
+    @Override
+    protected <T> T visit(Visitor<T> visitor) {
+      return visitor.visit(this);
+    }
+
     /** @return literal */
     public String literal() {
       return literal;
+    }
+
+    /** @return regex flags */
+    public int flags() {
+      return flags;
     }
 
     @Override
@@ -444,41 +411,6 @@ public abstract class Coregex implements Serializable {
 
     /** {@inheritDoc} */
     @Override
-    protected Pair<RNG, String> apply(RNG rng, int remainder) {
-      int minLength = minLength();
-      int quantifiedMinLength = quantified.minLength();
-      if (remainder < minLength) {
-        throw new IllegalStateException(
-            "remainder: " + remainder + " has to be greater than " + minLength);
-      }
-      StringBuilder sb = new StringBuilder(minLength + 16);
-      int quantifier = 0;
-      remainder -= minLength;
-      for (; quantifier < min; quantifier++) {
-        Pair<RNG, String> rngAndCoregex = quantified.apply(rng, remainder + quantifiedMinLength);
-        rng = rngAndCoregex.getFirst();
-        String value = rngAndCoregex.getSecond();
-        sb.append(value);
-        remainder -= value.length() - quantifiedMinLength;
-      }
-      while (quantifiedMinLength <= remainder && (-1 == max || quantifier++ < max)) {
-        Pair<RNG, Boolean> rngAndNext = rng.genBoolean();
-        rng = rngAndNext.getFirst();
-        if (!rngAndNext.getSecond()) {
-          break;
-        }
-
-        Pair<RNG, String> rngAndCoregex = quantified.apply(rng, remainder);
-        rng = rngAndCoregex.getFirst();
-        String value = rngAndCoregex.getSecond();
-        sb.append(value);
-        remainder -= value.length();
-      }
-      return new Pair<>(rng, sb.toString());
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public int minLength() {
       return quantified.minLength() * min;
     }
@@ -497,6 +429,12 @@ public abstract class Coregex implements Serializable {
       return (0 == quantified.minLength() && 0 == quantified.maxLength()) || (1 == min && 1 == max)
           ? quantified
           : new Quantified(quantified, min, max, type);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    protected <T> T visit(Visitor<T> visitor) {
+      return visitor.visit(this);
     }
 
     /** @return quantified regex */
@@ -620,19 +558,6 @@ public abstract class Coregex implements Serializable {
 
     /** {@inheritDoc} */
     @Override
-    protected Pair<RNG, String> apply(RNG rng, int remainder) {
-      if (remainder < minLength()) {
-        throw new IllegalStateException(
-            "remainder: " + remainder + " has to be greater than " + minLength());
-      }
-      Pair<RNG, Long> rngAndSeed = rng.genLong();
-      rng = rngAndSeed.getFirst();
-      String sample = String.valueOf(set.sample(rngAndSeed.getSecond()));
-      return new Pair<>(rng, sample);
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public int minLength() {
       return 1;
     }
@@ -647,6 +572,12 @@ public abstract class Coregex implements Serializable {
     @Override
     public Coregex simplify() {
       return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    protected <T> T visit(Visitor<T> visitor) {
+      return visitor.visit(this);
     }
 
     /** @return set of characters */
@@ -700,16 +631,6 @@ public abstract class Coregex implements Serializable {
 
     /** {@inheritDoc} */
     @Override
-    protected Pair<RNG, String> apply(RNG rng, int remainder) {
-      if (remainder < minLength()) {
-        throw new IllegalArgumentException(
-            "remainder: " + remainder + " has to be greater than " + minLength());
-      }
-      return sized.apply(rng, maxLength());
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public int minLength() {
       return Math.min(size, sized.minLength());
     }
@@ -730,6 +651,12 @@ public abstract class Coregex implements Serializable {
       } else {
         return new Sized(simplified, size);
       }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    protected <T> T visit(Visitor<T> visitor) {
+      return visitor.visit(this);
     }
 
     /** @return sized regex */
@@ -783,29 +710,6 @@ public abstract class Coregex implements Serializable {
 
     /** {@inheritDoc} */
     @Override
-    protected Pair<RNG, String> apply(RNG rng, int remainder) {
-      List<Coregex> fits = new ArrayList<>(rest.length + 1);
-      if (first.minLength() <= remainder) {
-        fits.add(first);
-      }
-      for (Coregex coregex : rest) {
-        if (coregex.minLength() <= remainder) {
-          fits.add(coregex);
-        }
-      }
-      if (fits.isEmpty()) {
-        throw new IllegalStateException(
-            "remainder: " + remainder + " has to be greater than " + minLength());
-      }
-
-      Pair<RNG, Integer> rngAndIndex = rng.genInteger(fits.size());
-      rng = rngAndIndex.getFirst();
-      int index = rngAndIndex.getSecond();
-      return fits.get(index).apply(rng, remainder);
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public int minLength() {
       int min = first.minLength();
       for (Coregex coregex : rest) {
@@ -831,12 +735,19 @@ public abstract class Coregex implements Serializable {
       return agg;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Coregex simplify() {
       return 0 == rest.length
           ? first.simplify()
           : new Union(
               first.simplify(), Arrays.stream(rest).map(Coregex::simplify).toArray(Coregex[]::new));
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    protected <T> T visit(Visitor<T> visitor) {
+      return visitor.visit(this);
     }
 
     /** @return underlying regexes forming this unification. */
@@ -875,5 +786,19 @@ public abstract class Coregex implements Serializable {
       }
       return joiner.toString();
     }
+  }
+
+  interface Visitor<T> {
+    T visit(Concat c);
+
+    T visit(Literal c);
+
+    T visit(Quantified c);
+
+    T visit(Set c);
+
+    T visit(Sized c);
+
+    T visit(Union c);
   }
 }

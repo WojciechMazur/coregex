@@ -21,6 +21,7 @@ import static java.util.Objects.requireNonNull;
 import java.io.Serializable;
 import java.util.BitSet;
 import java.util.Objects;
+import java.util.OptionalInt;
 import java.util.function.IntPredicate;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -96,6 +97,18 @@ public final class Set implements IntPredicate, Serializable {
   }
 
   /**
+   * Randomly selects one character in this set based on provided seed. Returns empty if this set is
+   * empty.
+   *
+   * @param seed seed to use for random selection
+   * @return sampled character or empty if this set is empty
+   * @see #sample(long)
+   */
+  public OptionalInt apply(long seed) {
+    return chars.stream().skip(Math.abs(seed % chars.cardinality())).findFirst();
+  }
+
+  /**
    * Checks if given character is included in this set.
    *
    * @param value character to check
@@ -110,14 +123,11 @@ public final class Set implements IntPredicate, Serializable {
    * Randomly selects one character in this set based on provided seed.
    *
    * @param seed seed to use for random selection
-   * @return selected character
+   * @return sampled character
    */
   public char sample(long seed) {
     return (char)
-        chars.stream()
-            .skip(Math.abs(seed % chars.cardinality()))
-            .findFirst()
-            .orElseThrow(() -> new IllegalStateException("empty set: " + description));
+        apply(seed).orElseThrow(() -> new IllegalStateException("empty set: " + description));
   }
 
   /** @return partitions this set into chunks. */
